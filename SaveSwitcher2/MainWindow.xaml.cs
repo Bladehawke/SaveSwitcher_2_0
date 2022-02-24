@@ -35,6 +35,7 @@ namespace SaveSwitcher2
     /// </summary>
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
+        TimeService _timeService = new TimeService();
         public string SteamPath { get; set; }
         public string GamePath { get; set; }
         public string SavePath { get; set; }
@@ -89,9 +90,21 @@ namespace SaveSwitcher2
         }
         public bool Unsynced { get; set; }
 
+        private TimeSpan _unsyncedPlaytime;
+
+        public TimeSpan UnsyncedPlaytime
+        {
+            get => _unsyncedPlaytime;
+            set
+            {
+                _unsyncedPlaytime = value;
+                FileService.WriteUnsynced(value);
+            }
+        }
+
         public string ActiveLabelText
         {
-            get { return ActiveSave != null ? ActiveSave.Name + (Unsynced? " (Backup unsynced)": "") : ""; }
+            get { return ActiveSave != null ? ActiveSave.Name + (Unsynced? " (Unsynced Playtime: "+((int)UnsyncedPlaytime.TotalHours)+"h "+UnsyncedPlaytime.Minutes+"m)": "") : ""; }
         }
 
         public string DialogLabelText { get; set; }
@@ -127,30 +140,37 @@ namespace SaveSwitcher2
             if (storedActive != null && new DirectoryInfo(SavePath).Exists)
             {
                 ActiveSave = StoredSaves.FirstOrDefault(x => x.Name.Equals(storedActive.Name));
-                if (new DirectoryInfo(SavePath).LastWriteTime > ActiveSave.LastChangedDate)
+                if (ActiveSave != null)
                 {
-                    //MessageBox.Show(new DirectoryInfo(SavePath).LastWriteTime +" " + ActiveSave.LastChangedDate);
-                    string tmpName = FileService.FindNewProfileName("Online_Save");
-                    try
+                    if (new DirectoryInfo(SavePath).LastWriteTime > ActiveSave.LastChangedDate)
                     {
-                        FileService.StoreSaveFile(SavePath, tmpName);
-                        RefreshDataSet();
-                        ActiveSave = StoredSaves.FirstOrDefault(x => x.Name.Equals(tmpName));
-                        FileService.SaveActive(ActiveSave);
+                        //MessageBox.Show(new DirectoryInfo(SavePath).LastWriteTime +" " + ActiveSave.LastChangedDate);
+                        string tmpName = FileService.FindNewProfileName("Online_Save");
+                        try
+                        {
+                            FileService.StoreSaveFile(SavePath, tmpName, TimeSpan.Zero);
+                            RefreshDataSet();
+                            ActiveSave = StoredSaves.FirstOrDefault(x => x.Name.Equals(tmpName));
+                            FileService.SaveActive(ActiveSave);
 
-                        DialogName = tmpName.ToString();
-                        _dialogBackupName = tmpName.ToString();
-                        DialogSaveEnabled = false;
-                        DialogLabelText =
-                            "Active save seems to be newer than stored backup. \nProbably due to online synchronyzation. \nSelect a profile name for the found data \nor click away for automatic naming.";
-                        IsDialogOpen = true;
-                    }
-                    catch (FileNotFoundException e)
-                    {
-                        MessageBox.Show(e.Message);
-                        ActiveSave = null;
-                    }
+                            DialogName = tmpName.ToString();
+                            _dialogBackupName = tmpName.ToString();
+                            DialogSaveEnabled = false;
+                            DialogLabelText =
+                                "Active save seems to be newer than stored backup. \nProbably due to online synchronyzation. \nSelect a profile name for the found data \nor click away for automatic naming.";
+                            IsDialogOpen = true;
+                        }
+                        catch (FileNotFoundException e)
+                        {
+                            MessageBox.Show(e.Message);
+                            ActiveSave = null;
+                        }
 
+                    }
+                }
+                else
+                {
+                    FileService.SaveActive(null);
                 }
             }
             else if (!new DirectoryInfo(SavePath).Exists)
@@ -164,6 +184,11 @@ namespace SaveSwitcher2
             }
 
             ToggleProcess();
+
+            if (!FileService.HasBeenStartedBefore())
+            {
+                WhereAreMyBackups("You seem to be starting this version of the SaveSwitcher for the first time. \n");
+            }
         }
 
         #region launchgame
@@ -187,6 +212,7 @@ namespace SaveSwitcher2
             };
             try
             {
+                _timeService.Start();
                 process.Start();
                 if (!SteamGameSelected)
                 {
@@ -210,18 +236,21 @@ namespace SaveSwitcher2
                     }
                 }
 
+                TimeSpan runDuration = _timeService.End() + TimeSpan.FromMinutes(1);
+
                 Unsynced = false;
                 if (AutoSyncChecked)
                 {
                     ToggleProcess("Game closed. Synchronizing Backup.", true);
                     try
                     {
-                        FileService.StoreSaveFile(SavePath, ActiveSave.Name);
+                        FileService.StoreSaveFile(SavePath, ActiveSave.Name, ActiveSave.PlayTime + runDuration + UnsyncedPlaytime);
                     }
                     catch (FileNotFoundException ex)
                     {
                         MessageBox.Show(ex.Message);
                     }
+                    UnsyncedPlaytime = TimeSpan.Zero;
                 }
                 else if (Boolean.Parse((string) await MaterialDesignThemes.Wpf.DialogHost.Show(
                     new MessageContainer("Do you want to refresh the backup for profile '" + ActiveLabelText +
@@ -230,17 +259,19 @@ namespace SaveSwitcher2
                     ToggleProcess("Synchronizing Backup.", true);
                     try
                     {
-                        FileService.StoreSaveFile(SavePath, ActiveSave.Name);
+                        FileService.StoreSaveFile(SavePath, ActiveSave.Name, ActiveSave.PlayTime + runDuration + UnsyncedPlaytime);
                     }
                     catch (FileNotFoundException ex)
                     {
                         MessageBox.Show(ex.Message);
                     }
+                    UnsyncedPlaytime = TimeSpan.Zero;
                 }
                 else
                 {
                     //FileService.SaveActive(null);
                     Unsynced = true;
+                    UnsyncedPlaytime += runDuration;
                 }
             }
             catch (Exception ex)
@@ -330,6 +361,7 @@ namespace SaveSwitcher2
         {
             DialogName = SelectedItem.Name.ToString();
             _dialogBackupName = SelectedItem.Name.ToString();
+            DialogCheckboxVisible = Visibility.Collapsed;
             DialogSaveEnabled = false;
             DialogLabelText = "Edit Profile: " + _dialogBackupName;
             IsDialogOpen = true;
@@ -354,6 +386,8 @@ namespace SaveSwitcher2
         {
             DialogName = "";
             _dialogBackupName = null;
+            DialogCheckboxVisible = Visibility.Visible;
+            DialogDublicateSave = true;
             DialogSaveEnabled = false;
             DialogLabelText = "New Profile";
             IsDialogOpen = true;
@@ -368,7 +402,7 @@ namespace SaveSwitcher2
             //store new data
             try
             {
-                FileService.StoreSaveFile(SavePath, SelectedItem.Name, null);
+                FileService.StoreSaveFile(SavePath, SelectedItem.Name, ActiveSave != null? ActiveSave.PlayTime + UnsyncedPlaytime : TimeSpan.Zero ,null);
             }
             catch (FileNotFoundException ex)
             {
@@ -379,6 +413,7 @@ namespace SaveSwitcher2
 
             FileService.SaveActive(new StoredSave(SelectedItem.Name, DateTime.Now));
             Unsynced = false;
+            UnsyncedPlaytime = TimeSpan.Zero;
             RefreshDataSet();
             ToggleProcess();
         }
@@ -411,6 +446,7 @@ namespace SaveSwitcher2
             }
 
             Unsynced = false;
+            UnsyncedPlaytime = TimeSpan.Zero;
         }
         #endregion
 
@@ -426,6 +462,10 @@ namespace SaveSwitcher2
             get { return _dialogBackupName != null ? !_dialogBackupName.Equals(DialogName) : true; }
         }
 
+        public bool DialogDublicateSave { get; set; }
+
+        public Visibility DialogCheckboxVisible { get; set; }
+
         public bool DialogSaveEnabled { get; set; }
 
         private async void DialogSaveButton_OnClick(object sender, RoutedEventArgs e)
@@ -436,7 +476,12 @@ namespace SaveSwitcher2
                     new MessageContainer("Do you want to overwrite profile '" + DialogName + "'?"), "YesNoDialog")))
                 {
                     IsDialogOpen = false;
-                    FinishDialog(true);
+                    bool overwritePlaytime = Boolean.Parse((string) await MaterialDesignThemes.Wpf.DialogHost.Show(
+                        new MessageContainer("Do you want to overwrite/reset the old playtime of profile '" +
+                                             DialogName + "'?"),
+                        "YesNoDialog"));
+
+                        FinishDialog(true, overwritePlaytime);
                 }
             }
             else
@@ -451,15 +496,22 @@ namespace SaveSwitcher2
             FinishDialog();
         }
 
-        private void FinishDialog(bool saving = false)
+        private void FinishDialog(bool saving = false, bool overwritePlaytime = true)
         {
             if (saving)
             {
+                bool clearNewProfile = false;
+
+
                 ToggleProcess("Saving Profile " + DialogName, true);
                 //store new data
                 try
                 {
-                    FileService.StoreSaveFile(SavePath, DialogName, _dialogBackupName);
+                    if (overwritePlaytime)
+                    {
+                        FileService.StoreSaveFile(SavePath, DialogName, ActiveSave != null ? ActiveSave.PlayTime+UnsyncedPlaytime : TimeSpan.Zero,_dialogBackupName, !DialogDublicateSave);
+                    }
+                    else FileService.StoreSaveFile(SavePath, DialogName, oldName:_dialogBackupName, clearProfile:!DialogDublicateSave);
                 }
                 catch (FileNotFoundException ex)
                 {
@@ -475,11 +527,12 @@ namespace SaveSwitcher2
                     ActiveSave.Name = DialogName;
                     FileService.SaveActive(ActiveSave);
                 }
-                else if (_dialogBackupName == null)
+                else if (_dialogBackupName == null && DialogDublicateSave)
                 {
                     //addbutton
                     FileService.SaveActive(new StoredSave(DialogName, DateTime.Now));
                     Unsynced = false;
+                    UnsyncedPlaytime = TimeSpan.Zero;
                 }
 
                 RefreshDataSet();
@@ -519,6 +572,20 @@ namespace SaveSwitcher2
             ExtensionMethods.Refresh(ProgressBar);
             ExtensionMethods.Refresh(InfoLabel);
             ExtensionMethods.Refresh(ProcessPanel);
+        }
+
+        private void WhereAreMyBackupsButton_OnClick(object sender, RoutedEventArgs e)
+        {
+            WhereAreMyBackups();
+        }
+
+
+        private void WhereAreMyBackups(string header = null)
+        {
+            var curDir = new DirectoryInfo(System.AppDomain.CurrentDomain.BaseDirectory);
+            Process.Start("explorer.exe", curDir.Parent.FullName);
+            MessageBox.Show((header == null? "" : header) +
+            "In case you just upgraded from version 2.0.11.1 or older, your backups might still be located in a deprecated directory. With this version they have been moved to: \n'" + FileService.StorePath + "' \nfor easier access. That way they can also be kept automatically when updating the app. \nTo access your old backups please copy them to the new directory. Look for a folder called 'Savegames\\*Profilename*' in: \n'" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Apps\\2.0\\") + "' \nThe folder to look in should just have opened.");
         }
     }
 }

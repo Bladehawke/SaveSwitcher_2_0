@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:SaveSwitcher2"
         mc:Ignorable="d"
         Title="SaveSwitcher 2.0 - Ultimate" Height="450" Width="800"
-        MinWidth="750"
+        MinWidth="780"
         MinHeight="350"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:model="clr-namespace:SaveSwitcher2.Model"
@@ -84,7 +84,13 @@
                         Text="{Binding DialogName}"
                         TextChanged="DialogNameTextBox_OnTextChanged"
                         />
-                    <Button
+                        <CheckBox Content="Include current (active) savegames &#x0a;in new profile"
+                                  Visibility="{Binding DialogCheckboxVisible}"
+                              Margin="10"
+                              Style="{StaticResource MaterialDesignAccentCheckBox}"
+                                  ToolTip="Necessary to e.g. create your first profile, containing your preexisting savegames. &#x0a;Not checking this will create an empty profile.&#x0a;Be careful to backup your savegames before loading an empty profile."
+                                  IsChecked="{Binding DialogDublicateSave}"/>
+                        <Button
                         Style="{StaticResource MaterialDesignRaisedAccentButton}"
                         Width="100"
                         Margin="10"
@@ -210,7 +216,10 @@
                                 <materialDesign:DataGridTextColumn
                                     Header="Last Changed"
                                     Binding="{Binding LastChangedDate}"/>
-                            </DataGrid.Columns>
+                                <materialDesign:DataGridTextColumn
+                                    Header="Playtime"
+                                    Binding="{Binding PlaytimeDisplay}"/>
+                                </DataGrid.Columns>
                         </DataGrid>
                         <Grid Grid.Row="0"
                               HorizontalAlignment="Stretch"
@@ -276,7 +285,7 @@
                                 <Button
                                     Name="AddButton"
                                     Style="{StaticResource MaterialDesignFloatingActionMiniLightButton}"
-                                    ToolTip="New profile, copy active save file"
+                                    ToolTip="New profile, copy active save file or create empty profile"
                                     Click="AddButton_OnClick"
                                     Margin="10">
                                     <materialDesign:PackIcon
@@ -360,10 +369,20 @@
                             Change gamepaths
                         </Button>
                     </materialDesign:Badged>
-                    
-                    
-                 
-                </Grid>
+                    <Button
+                        Name="WhereAreMyBackupsButton"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Click="WhereAreMyBackupsButton_OnClick"
+                        Style="{StaticResource MaterialDesignRaisedLightButton}"
+                        ToolTip="Help in case you are missing your backups after updating the app"
+                        Margin="10">
+                        Where are my backups?
+                    </Button>
+
+
+
+                    </Grid>
             </materialDesign:DrawerHost>
             </materialDesign:DialogHost>
         </materialDesign:DialogHost>
